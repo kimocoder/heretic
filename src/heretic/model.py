@@ -1,11 +1,17 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (C) 2025-2026  Philipp Emanuel Weidmann <pew@worldwidemann.com> + contributors
 
+import json
+import subprocess
+import urllib.parse
+import urllib.request
 from collections.abc import Callable
 from contextlib import suppress
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, TypeAlias, cast
 
+import huggingface_hub
 import torch
 from peft import LoraConfig, PeftModel, get_peft_model
 from torch import FloatTensor, LongTensor, Tensor
@@ -33,10 +39,159 @@ from .system import empty_cache
 from .utils import Prompt, batchify, format_exception, print
 
 
+def _is_snapshot_complete(snapshot_dir: Path) -> bool:
+    if not (snapshot_dir / "config.json").is_file():
+        return False
+    if any(snapshot_dir.glob("*.partial")) or any(snapshot_dir.glob("*.incomplete")):
+        return False
+    for index_name in ("model.safetensors.index.json", "pytorch_model.bin.index.json"):
+        index_file = snapshot_dir / index_name
+        if index_file.is_file():
+            try:
+                data = json.loads(index_file.read_text(encoding="utf-8"))
+                shards = set((data.get("weight_map") or {}).values())
+                return bool(shards) and all(
+                    (snapshot_dir / shard).is_file() for shard in shards
+                )
+            except Exception:
+                return False
+    return bool(
+        list(snapshot_dir.glob("*.safetensors")) or list(snapshot_dir.glob("*.bin"))
+    )
+
+
+def _find_complete_hf_snapshot(model: str, revision: str | None = None) -> Path | None:
+    if Path(model).exists():
+        return Path(model)
+    hub_dir = (
+        Path(huggingface_hub.constants.HF_HUB_CACHE)
+        / f"models--{model.replace('/', '--')}"
+    )
+    snapshots_dir = hub_dir / "snapshots"
+    if not snapshots_dir.is_dir():
+        return None
+    candidates: list[Path] = []
+    if revision:
+        candidates.append(snapshots_dir / revision)
+    ref_main = hub_dir / "refs" / "main"
+    if ref_main.is_file():
+        ref_rev = ref_main.read_text(encoding="utf-8").strip()
+        if ref_rev:
+            candidates.append(snapshots_dir / ref_rev)
+    candidates.extend(
+        sorted(
+            (p for p in snapshots_dir.iterdir() if p.is_dir()),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+    )
+    seen: set[Path] = set()
+    for cand in candidates:
+        if cand in seen or not cand.is_dir():
+            continue
+        seen.add(cand)
+        if _is_snapshot_complete(cand):
+            return cand
+    return None
+
+
+def _download_from_modelscope(model: str) -> Path:
+    api_url = f"https://www.modelscope.cn/api/v1/models/{model}/repo/files"
+    req = urllib.request.Request(api_url, headers={"Accept": "application/json"})
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        payload = json.loads(resp.read().decode("utf-8"))
+    raw_files = (payload.get("Data") or {}).get("Files") or []
+    files = [
+        f
+        for f in raw_files
+        if f.get("Type") == "blob"
+        and f.get("Path")
+        and f.get("Path") not in {".gitattributes"}
+    ]
+    if not files:
+        raise OSError(f"ModelScope repository {model} contains no downloadable files.")
+
+    commit_id = str(files[0].get("Revision") or "main")
+    hub_dir = (
+        Path(huggingface_hub.constants.HF_HUB_CACHE)
+        / f"models--{model.replace('/', '--')}"
+    )
+    snapshot_dir = hub_dir / "snapshots" / commit_id
+    refs_dir = hub_dir / "refs"
+    snapshot_dir.mkdir(parents=True, exist_ok=True)
+    refs_dir.mkdir(parents=True, exist_ok=True)
+    (refs_dir / "main").write_text(commit_id, encoding="utf-8")
+
+    print(
+        f"* [yellow]Hugging Face Hub rate-limited or unreachable; staging [bold]{model}[/] from ModelScope ({len(files)} files)...[/]"
+    )
+    for idx, f in enumerate(files, 1):
+        rel_path = str(f["Path"])
+        expected_size = int(f.get("Size") or 0)
+        dest = snapshot_dir / rel_path
+        partial = snapshot_dir / f"{rel_path}.partial"
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        if (
+            dest.is_file()
+            and not partial.exists()
+            and (expected_size <= 0 or dest.stat().st_size == expected_size)
+        ):
+            continue
+        size_mb = expected_size / (1024 * 1024)
+        print(
+            f"  * Downloading [bold]{rel_path}[/] ({idx}/{len(files)}, {size_mb:.1f} MB)..."
+        )
+        file_url = (
+            f"https://www.modelscope.cn/models/{model}/resolve/master/"
+            f"{urllib.parse.quote(rel_path)}"
+        )
+        subprocess.run(
+            [
+                "curl",
+                "-fL",
+                "--retry",
+                "12",
+                "--retry-all-errors",
+                "--retry-delay",
+                "5",
+                "-C",
+                "-",
+                "--silent",
+                "--show-error",
+                "-o",
+                str(partial),
+                file_url,
+            ],
+            check=True,
+        )
+        if expected_size > 0 and partial.stat().st_size != expected_size:
+            raise OSError(
+                f"Incomplete download for {rel_path}: got {partial.stat().st_size} bytes, expected {expected_size}."
+            )
+        partial.replace(dest)
+
+    return snapshot_dir
+
+
+def ensure_model_cached(model: str, revision: str | None = None) -> str:
+    local_snap = _find_complete_hf_snapshot(model, revision)
+    if local_snap is not None:
+        return str(local_snap)
+    try:
+        huggingface_hub.model_info(model, revision=revision, timeout=10)
+        return model
+    except Exception:
+        if "/" in model and not Path(model).exists():
+            return str(_download_from_modelscope(model))
+        raise
+
+
 def get_model_class(
     model: str,
 ) -> type[AutoModelForImageTextToText] | type[AutoModelForCausalLM]:
-    configs = PretrainedConfig.get_config_dict(model)
+    local_snap = _find_complete_hf_snapshot(model)
+    target = str(local_snap) if local_snap is not None else model
+    configs = PretrainedConfig.get_config_dict(target)
 
     if any(("vision_config" in config) for config in configs):
         return AutoModelForImageTextToText
@@ -129,22 +284,27 @@ class Model:
         print()
         print(f"Loading model [bold]{settings.model}[/]...")
 
+        resolved_model = ensure_model_cached(settings.model, settings.model_commit)
+        load_revision_kwargs = (
+            self.revision_kwargs if resolved_model == settings.model else {}
+        )
+
         # PreTrainedTokenizerBase is the "base class for all tokenizer backends"
         # according to the documentation.
         self.tokenizer = cast(
             PreTrainedTokenizerBase,
             AutoTokenizer.from_pretrained(
-                settings.model,
-                **self.revision_kwargs,
+                resolved_model,
+                **load_revision_kwargs,
             ),
         )
 
         # Multimodal models have a processor we'll want to save.
         self.processor = None
-        if get_model_class(settings.model) == AutoModelForImageTextToText:
+        if get_model_class(resolved_model) == AutoModelForImageTextToText:
             self.processor = AutoProcessor.from_pretrained(
-                settings.model,
-                **self.revision_kwargs,
+                resolved_model,
+                **load_revision_kwargs,
             )
 
         # Fallback for tokenizers that don't declare a special pad token.
@@ -182,17 +342,18 @@ class Model:
                 if quantization_config is not None:
                     extra_kwargs["quantization_config"] = quantization_config
 
-                self.model = get_model_class(settings.model).from_pretrained(
-                    settings.model,
+                self.model = get_model_class(resolved_model).from_pretrained(
+                    resolved_model,
                     dtype=dtype,
                     device_map=settings.device_map,
                     max_memory=self.max_memory,
                     trust_remote_code=True
                     if settings.model in self.trusted_models
                     else None,
-                    **self.revision_kwargs,
+                    **load_revision_kwargs,
                     **extra_kwargs,
                 )
+                self.model.config._name_or_path = settings.model
 
                 self.dtype = self.model.dtype
 
@@ -352,15 +513,22 @@ class Model:
 
             # Load base model in full precision on CPU to avoid VRAM issues
             print("* Loading base model on CPU (this may take a while)...")
-            base_model = get_model_class(self.settings.model).from_pretrained(
-                self.settings.model,
+            resolved_model = ensure_model_cached(
+                self.settings.model, self.settings.model_commit
+            )
+            load_revision_kwargs = (
+                self.revision_kwargs if resolved_model == self.settings.model else {}
+            )
+            base_model = get_model_class(resolved_model).from_pretrained(
+                resolved_model,
                 torch_dtype=model_dtype,
                 device_map="cpu",
                 trust_remote_code=True
                 if self.settings.model in self.trusted_models
                 else None,
-                **self.revision_kwargs,
+                **load_revision_kwargs,
             )
+            base_model.config._name_or_path = self.settings.model
 
             # Apply LoRA adapters to the CPU model
             print("* Applying LoRA adapters...")
@@ -422,17 +590,25 @@ class Model:
         if quantization_config is not None:
             extra_kwargs["quantization_config"] = quantization_config
 
-        self.model = get_model_class(self.settings.model).from_pretrained(
-            self.settings.model,
+        resolved_model = ensure_model_cached(
+            self.settings.model, self.settings.model_commit
+        )
+        load_revision_kwargs = (
+            self.revision_kwargs if resolved_model == self.settings.model else {}
+        )
+
+        self.model = get_model_class(resolved_model).from_pretrained(
+            resolved_model,
             dtype=self.dtype,
             device_map=self.settings.device_map,
             max_memory=self.max_memory,
             trust_remote_code=True
             if self.settings.model in self.trusted_models
             else None,
-            **self.revision_kwargs,
+            **load_revision_kwargs,
             **extra_kwargs,
         )
+        self.model.config._name_or_path = self.settings.model
 
         self.needs_reload = False
 

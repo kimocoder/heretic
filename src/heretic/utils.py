@@ -198,10 +198,12 @@ def _load_prompts_single(
         if is_hf_path(path):
             # Pin to the latest commit if not already set, so the exact dataset
             # version is recorded for reproducibility.
+            hub_unreachable = False
             if specification.commit is None:
                 try:
                     specification.commit = huggingface_hub.dataset_info(path).sha
                 except Exception as error:
+                    hub_unreachable = True
                     # Fetching the commit hash requires internet access, but the
                     # dataset itself may be fully cached locally. Proceed without
                     # pinning; an unpinned dataset disables the reproducibility
@@ -210,12 +212,49 @@ def _load_prompts_single(
                         f"[yellow]Warning: Could not fetch the latest commit hash for dataset [bold]{path}[/] ({error}). "
                         "The dataset version will not be pinned.[/]"
                     )
-            dataset = load_dataset(
-                path,
-                name=specification.config,
-                revision=specification.commit,
-                split=split_str,
-            )
+            if hub_unreachable:
+                prev_hub = os.environ.get("HF_HUB_OFFLINE")
+                prev_ds = os.environ.get("HF_DATASETS_OFFLINE")
+                os.environ["HF_HUB_OFFLINE"] = "1"
+                os.environ["HF_DATASETS_OFFLINE"] = "1"
+                try:
+                    dataset = load_dataset(
+                        path,
+                        name=specification.config,
+                        revision=specification.commit,
+                        split=split_str,
+                    )
+                except Exception:
+                    if prev_hub is None:
+                        os.environ.pop("HF_HUB_OFFLINE", None)
+                    else:
+                        os.environ["HF_HUB_OFFLINE"] = prev_hub
+                    if prev_ds is None:
+                        os.environ.pop("HF_DATASETS_OFFLINE", None)
+                    else:
+                        os.environ["HF_DATASETS_OFFLINE"] = prev_ds
+                    dataset = load_dataset(
+                        path,
+                        name=specification.config,
+                        revision=specification.commit,
+                        split=split_str,
+                    )
+                else:
+                    if prev_hub is None:
+                        os.environ.pop("HF_HUB_OFFLINE", None)
+                    else:
+                        os.environ["HF_HUB_OFFLINE"] = prev_hub
+                    if prev_ds is None:
+                        os.environ.pop("HF_DATASETS_OFFLINE", None)
+                    else:
+                        os.environ["HF_DATASETS_OFFLINE"] = prev_ds
+            else:
+                dataset = load_dataset(
+                    path,
+                    name=specification.config,
+                    revision=specification.commit,
+                    split=split_str,
+                )
         elif Path(path, DATASET_STATE_JSON_FILENAME).exists():
             # Dataset saved with datasets.save_to_disk; needs special handling.
             # Path should be the subdirectory for a particular split.
@@ -693,7 +732,17 @@ def create_reproduce_folder(
     checkpoint_filename = Path(checkpoint_path).name
 
     # Fetch commit hash for the base model.
-    settings.model_commit = huggingface_hub.model_info(settings.model).sha
+    try:
+        settings.model_commit = huggingface_hub.model_info(settings.model).sha
+    except Exception:
+        ref_file = (
+            Path(huggingface_hub.constants.HF_HUB_CACHE)
+            / f"models--{settings.model.replace('/', '--')}"
+            / "refs"
+            / "main"
+        )
+        if ref_file.is_file():
+            settings.model_commit = ref_file.read_text(encoding="utf-8").strip() or None
 
     # Strip microseconds and timezone for a clean format.
     timestamp = (
