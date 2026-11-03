@@ -96,6 +96,7 @@ def collect_reproducibles(path: str):
             cache_path = hf_hub_download(
                 model.id,
                 "reproduce/reproduce.json",
+                revision=commit_hash,
             )
 
             file_path.parent.mkdir(parents=True, exist_ok=True)
@@ -120,7 +121,7 @@ def load_reproduction_information(path: str) -> dict[str, Any]:
         path = path.replace("/blob/", "/raw/")  # Hugging Face, GitHub
         path = path.replace("/src/branch/", "/raw/branch/")  # Codeberg
 
-        json_str = urlopen(path).read().decode("utf-8")
+        json_str = urlopen(path).read().decode("utf-8")  # nosec B310
     else:
         # The path is (assumed to be) a local file system path.
         json_str = Path(path).read_text(encoding="utf-8")

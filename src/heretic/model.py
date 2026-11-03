@@ -98,7 +98,7 @@ def _find_complete_hf_snapshot(model: str, revision: str | None = None) -> Path 
 def _download_from_modelscope(model: str) -> Path:
     api_url = f"https://www.modelscope.cn/api/v1/models/{model}/repo/files"
     req = urllib.request.Request(api_url, headers={"Accept": "application/json"})
-    with urllib.request.urlopen(req, timeout=30) as resp:
+    with urllib.request.urlopen(req, timeout=30) as resp:  # nosec B310
         payload = json.loads(resp.read().decode("utf-8"))
     raw_files = (payload.get("Data") or {}).get("Files") or []
     files = [
@@ -295,7 +295,7 @@ class Model:
             PreTrainedTokenizerBase,
             AutoTokenizer.from_pretrained(
                 resolved_model,
-                **load_revision_kwargs,
+                revision=load_revision_kwargs.get("revision"),
             ),
         )
 
@@ -304,7 +304,7 @@ class Model:
         if get_model_class(resolved_model) == AutoModelForImageTextToText:
             self.processor = AutoProcessor.from_pretrained(
                 resolved_model,
-                **load_revision_kwargs,
+                revision=load_revision_kwargs.get("revision"),
             )
 
         # Fallback for tokenizers that don't declare a special pad token.

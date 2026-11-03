@@ -266,8 +266,8 @@ def _load_prompts_single(
             start, end = get_split_slice(split_str, len(dataset))
             dataset = dataset[start:end]
         else:
-            # Path should be a local directory.
-            dataset = load_dataset(
+            # Local directory, not a Hub repo, so there is no commit to pin.
+            dataset = load_dataset(  # nosec B615
                 path,
                 name=specification.config,
                 split=split_str,
@@ -635,7 +635,7 @@ This directory contains the necessary information and assets to reproduce the re
 1. Install the correct version of PyTorch: `{pytorch_install_command}`
 1. Place the provided `config.toml` in your working directory.
 1. Run Heretic without any additional arguments: `heretic`
-1. Wait for the run to finish, then select trial **{trial.user_attrs["index"]}** and export the model.
+1. Wait for the run to finish, then choose trial **{trial.user_attrs["index"]}** and export the model.
 1. Verify that the weight files have been exactly reproduced by comparing their SHA-256 hashes against those in `SHA256SUMS.txt`:
    `sha256sum -c SHA256SUMS.txt` (or look at the hashes online if you uploaded to Hugging Face)
 
