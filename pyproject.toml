@@ -8,7 +8,7 @@ authors = [
     { name = "Philipp Emanuel Weidmann", email = "pew@worldwidemann.com" }
 ]
 requires-python = ">=3.10"
-keywords = ["llm", "transformer", "abliteration"]
+keywords = ["llm", "transformer", "abliteration", "ara", "alignment"]
 classifiers = [
     "Development Status :: 5 - Production/Stable",
     "Environment :: Console",
@@ -63,7 +63,7 @@ Changelog = "https://github.com/p-e-w/heretic/releases"
 heretic = "heretic.main:main"
 
 [build-system]
-requires = ["uv_build>=0.12.21,<0.13.0"]
+requires = ["uv_build>=0.12.21,<0.14.0"]
 build-backend = "uv_build"
 
 [tool.ruff.lint]
