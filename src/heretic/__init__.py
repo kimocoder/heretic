@@ -6,7 +6,7 @@ from importlib.metadata import PackageNotFoundError, version
 try:
     __version__ = version("heretic-llm")
 except PackageNotFoundError:
-    __version__ = "2.0.0"
+    __version__ = "unknown"
 
 from .modifier import Modifier
 from .plugin import Context, Plugin
