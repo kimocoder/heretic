@@ -43,13 +43,13 @@ dependencies = [
     "torch",  # version deliberately unspecified
     "torchvision",  # version deliberately unspecified
     "tqdm~=4.70",
-    "transformers[kernels]~=5.18",
+    "transformers[kernels]~=5.20",
 ]
 
 [dependency-groups]
 dev = [
     "ruff>=0.17.3",
-    "ty>=0.0.84",
+    "ty>=0.0.92",
 ]
 
 [project.urls]
