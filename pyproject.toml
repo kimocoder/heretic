@@ -76,7 +76,7 @@ ignore = [
 
 [tool.uv]
 exclude-newer = "7 days"
-exclude-newer-package = { huggingface-hub = "2026-11-03T00:00:00Z" }
+exclude-newer-package = { huggingface-hub = "2026-11-03T00:00:00Z", pydantic-settings = "2026-11-03T00:00:00Z" }
 
 [tool.uv.sources]
 torch = { index = "pytorch" }
