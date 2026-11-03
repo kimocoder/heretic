@@ -27,7 +27,7 @@ dependencies = [
     "accelerate~=1.15",
     "bitsandbytes~=0.50",
     "datasets~=5.0",
-    "huggingface-hub~=2.3",
+    "huggingface-hub~=2.4",
     "immutabledict~=4.3",
     "langdetect~=1.0",
     "lm-eval[hf]~=0.4",
@@ -76,6 +76,7 @@ ignore = [
 
 [tool.uv]
 exclude-newer = "7 days"
+exclude-newer-package = { huggingface-hub = "2026-11-03T00:00:00Z" }
 
 [tool.uv.sources]
 torch = { index = "pytorch" }
