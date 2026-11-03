@@ -368,13 +368,20 @@ class Abliteration(Modifier[Parameters]):
                     #        module types depending on the chosen quantization.
                     module = cast(Linear, module)
 
+                    # Assign to adapters. The adapter name is "default", because that's
+                    # what PEFT uses when no name is explicitly specified, as above.
+                    # These casts are therefore valid.
+                    weight_A = cast(Tensor, module.lora_A["default"].weight)
+                    weight_B = cast(Tensor, module.lora_B["default"].weight)
+                    target_device = weight_A.device
+
                     # LoRA abliteration: delta W = -lambda * v * (v^T W)
                     # lora_B = -lambda * v
                     # lora_A = v^T W
 
                     # Use the FP32 residual direction directly (no downcast/upcast)
                     # and move to the correct device.
-                    v = layer_residual_direction.to(module.weight.device)
+                    v = layer_residual_direction.to(target_device)
 
                     # Get W (dequantize if necessary).
                     #
@@ -382,16 +389,21 @@ class Abliteration(Modifier[Parameters]):
                     #        module wrapped by the LoRA adapter has a weight attribute.
                     #        See the comment above for why this is currently not guaranteed.
                     base_weight = cast(Tensor, module.base_layer.weight)
+                    if base_weight.device.type == "meta":
+                        hf_hook = getattr(module.base_layer, "_hf_hook", None)
+                        if hf_hook is not None and hf_hook.weights_map is not None:
+                            base_weight = cast(Tensor, hf_hook.weights_map["weight"])
+
                     quant_state = getattr(base_weight, "quant_state", None)
 
                     if quant_state is None:
-                        W = base_weight.to(torch.float32)
+                        W = base_weight.to(device=target_device, dtype=torch.float32)
                     else:
                         # 4-bit quantization.
                         W = BNB_F.dequantize_4bit(
                             base_weight.data,
                             quant_state,
-                        ).to(torch.float32)
+                        ).to(device=target_device, dtype=torch.float32)
 
                     # Flatten weight matrix to (out_features, in_features).
                     W = W.view(W.shape[0], -1)
@@ -451,11 +463,6 @@ class Abliteration(Modifier[Parameters]):
                         lora_B = U @ torch.diag(sqrt_S)
                         lora_A = torch.diag(sqrt_S) @ Vh
 
-                    # Assign to adapters. The adapter name is "default", because that's
-                    # what PEFT uses when no name is explicitly specified, as above.
-                    # These casts are therefore valid.
-                    weight_A = cast(Tensor, module.lora_A["default"].weight)
-                    weight_B = cast(Tensor, module.lora_B["default"].weight)
                     weight_A.data = lora_A.to(weight_A.dtype)
                     weight_B.data = lora_B.to(weight_B.dtype)
 

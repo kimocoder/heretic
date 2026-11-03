@@ -293,6 +293,8 @@ class Model:
     def _zero_lora_weights(self):
         for name, module in self.model.named_modules():
             if ("lora_A" in name or "lora_B" in name) and hasattr(module, "weight"):
+                if module.weight.device.type == "meta":
+                    module.to_empty(device=self.model.device)
                 torch.nn.init.zeros_(module.weight)
 
     def _get_quantization_config(self, dtype: str) -> BitsAndBytesConfig | None:
@@ -317,6 +319,7 @@ class Model:
                 bnb_4bit_compute_dtype=compute_dtype,
                 bnb_4bit_quant_type="nf4",
                 bnb_4bit_use_double_quant=True,
+                llm_int8_enable_fp32_cpu_offload=True,
             )
         return None
 
@@ -324,22 +327,34 @@ class Model:
         # Guard against calling this method at the wrong time.
         assert isinstance(self.model, PeftModel)
 
-        # Check if we need special handling for quantized models
-        if self.settings.quantization == QuantizationMethod.BNB_4BIT:
-            # Quantized models need special handling - we must reload the base model
-            # in full precision to merge the LoRA adapters
+        has_offloaded_params = any(
+            param.device.type == "meta" for param in self.model.parameters()
+        )
 
-            # Get the adapter state dict before we do anything
+        # Check if we need special handling for quantized or CPU-offloaded models
+        if (
+            self.settings.quantization == QuantizationMethod.BNB_4BIT
+            or has_offloaded_params
+        ):
+            # Quantized or CPU-offloaded models need special handling - we must reload
+            # the base model in full precision on CPU to merge the LoRA adapters
+
+            # Get the adapter state dict and dtype before freeing the working model
+            model_dtype = self.model.dtype
             adapter_state = {}
             for name, param in self.model.named_parameters():
                 if "lora_" in name:
                     adapter_state[name] = param.data.clone().cpu()
 
+            self.model = None  # ty: ignore[invalid-assignment]
+            self.needs_reload = True
+            empty_cache()
+
             # Load base model in full precision on CPU to avoid VRAM issues
             print("* Loading base model on CPU (this may take a while)...")
             base_model = get_model_class(self.settings.model).from_pretrained(
                 self.settings.model,
-                torch_dtype=self.model.dtype,
+                torch_dtype=model_dtype,
                 device_map="cpu",
                 trust_remote_code=True
                 if self.settings.model in self.trusted_models
@@ -689,12 +704,21 @@ class Model:
             self.model.config,
         )
 
+        target_device = (
+            torch.device("cpu")
+            if self.settings.offload_outputs_to_cpu
+            else hidden_states[0].device
+        )
+
         # The returned tensor has shape (prompt, layer, component).
         residuals = torch.stack(
             # layer_hidden_states has shape (prompt, position, component),
             # so this extracts the hidden states at the end of each prompt,
             # and stacks them up over the layers.
-            [layer_hidden_states[:, -1, :] for layer_hidden_states in hidden_states],
+            [
+                layer_hidden_states[:, -1, :].to(target_device)
+                for layer_hidden_states in hidden_states
+            ],
             dim=1,
         )
 

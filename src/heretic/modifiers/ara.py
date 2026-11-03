@@ -268,18 +268,29 @@ class ARA(Modifier[Parameters]):
                     # Cast to Linear to access weights and LoRA adapters.
                     module = cast(Linear, module)
 
+                    # We optimize the LoRA weights A and B.
+                    lora_A = cast(Tensor, module.lora_A["default"].weight)
+                    lora_B = cast(Tensor, module.lora_B["default"].weight)
+
                     # We need the base weight in float32 to compute the effective weight.
                     base_weight = cast(Tensor, module.base_layer.weight)
+                    if base_weight.device.type == "meta":
+                        hf_hook = getattr(module.base_layer, "_hf_hook", None)
+                        if hf_hook is not None and hf_hook.weights_map is not None:
+                            base_weight = cast(Tensor, hf_hook.weights_map["weight"])
+
                     quant_state = getattr(base_weight, "quant_state", None)
 
                     if quant_state is None:
-                        W_base = base_weight.to(torch.float32)
+                        W_base = base_weight.to(
+                            device=lora_A.device, dtype=torch.float32
+                        )
                     else:
                         # Use the original dequantization logic from bitsandbytes.
                         W_base = BNB_F.dequantize_4bit(
                             base_weight.data,
                             quant_state,
-                        ).to(torch.float32)
+                        ).to(device=lora_A.device, dtype=torch.float32)
 
                     # Pre-calculate the original row norms to preserve them.
                     # See https://huggingface.co/blog/grimjim/norm-preserving-biprojected-abliteration
@@ -287,10 +298,6 @@ class ARA(Modifier[Parameters]):
                         Tensor,
                         LA.vector_norm(W_base, dim=1, keepdim=True).detach(),
                     )
-
-                    # We optimize the LoRA weights A and B.
-                    lora_A = cast(Tensor, module.lora_A["default"].weight)
-                    lora_B = cast(Tensor, module.lora_B["default"].weight)
 
                     # Initialize A the same way PEFT does, but deterministically. See
                     # https://github.com/huggingface/peft/blob/v0.21.2/src/peft/tuners/lora/layer.py#L338
