@@ -159,5 +159,17 @@ class SettingsUploadTagsTests(unittest.TestCase):
             self.assertEqual(settings.upload_tags, ["cli-tag", "test"])
 
 
+class PackageExportTests(unittest.TestCase):
+    def test_package_exports(self) -> None:
+        import heretic
+
+        self.assertEqual(heretic.__version__, "2.0.0")
+        self.assertIsNotNone(heretic.Modifier)
+        self.assertIsNotNone(heretic.Scorer)
+        self.assertIsNotNone(heretic.Plugin)
+        self.assertIsNotNone(heretic.Score)
+        self.assertIsNotNone(heretic.Context)
+
+
 if __name__ == "__main__":
     unittest.main()
