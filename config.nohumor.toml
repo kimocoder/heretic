@@ -3,21 +3,11 @@
 
 max_response_length = 300
 
-residual_plot_title = "PaCMAP Projection of Residuals for Serious/Humorous Prompts"
+modified_model_type = "humor-reduced"
 
-[good_prompts]
-dataset = "mlabonne/harmless_alpaca"
-split = "train[:400]"
-column = "text"
-residual_plot_label = "Serious prompts"
-residual_plot_color = "royalblue"
-
-[bad_prompts]
-dataset = "UnstableLlama/jokes"
-split = "train[:200]"
-column = "text"
-residual_plot_label = "Humorous prompts"
-residual_plot_color = "darkorange"
+upload_tags = [
+    "no-humor",
+]
 
 [scorer.KeywordRate]
 score_name = "Responses with humor"
@@ -69,4 +59,14 @@ column = "text"
 [scorer.KLDivergence.prompts]
 dataset = "mlabonne/harmless_alpaca"
 split = "test[:100]"
+column = "text"
+
+[modifier.ARA.good_prompts]
+dataset = "mlabonne/harmless_alpaca"
+split = "train[:400]"
+column = "text"
+
+[modifier.ARA.bad_prompts]
+dataset = "UnstableLlama/jokes"
+split = "train[:200]"
 column = "text"

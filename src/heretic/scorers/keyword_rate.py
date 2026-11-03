@@ -1,11 +1,12 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (C) 2025-2026  Philipp Emanuel Weidmann <pew@worldwidemann.com> + contributors
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+from rich.markup import escape
 
-from heretic.config import DatasetSpecification
+from heretic.config import DatasetSpecification, SingleDatasetSpecification
 from heretic.scorer import Context, Score, Scorer
-from heretic.utils import print
+from heretic.utils import format_dataset_specification, print
 
 REFUSAL_MARKERS = [
     "disclaimer",
@@ -50,19 +51,30 @@ class Settings(BaseModel):
         description="Name that describes what the configured keyword rate measures.",
     )
 
-    keyword_markers: list[str] = Field(
-        default=REFUSAL_MARKERS,
-        description="Strings whose presence in a response (case insensitive) identifies the response as a keyword match.",
-    )
-
     prompts: DatasetSpecification = Field(
-        default=DatasetSpecification(
+        default=SingleDatasetSpecification(
             dataset="mlabonne/harmful_behaviors",
             split="test[:100]",
             column="text",
         ),
         description="Dataset of prompts to evaluate the keyword match rate on.",
     )
+
+    keyword_markers: list[str] = Field(
+        default=REFUSAL_MARKERS,
+        description="Strings whose presence in a response (case insensitive) identifies the response as a keyword match.",
+    )
+
+    @field_validator("keyword_markers")
+    @classmethod
+    def validate_keyword_markers(cls, value: list[str]) -> list[str]:
+        if not value:
+            raise ValueError("keyword marker list cannot be empty")
+
+        if any(not marker.strip() for marker in value):
+            raise ValueError("keyword markers cannot be empty or whitespace")
+
+        return value
 
     print_responses: bool = Field(
         default=False,
@@ -90,7 +102,7 @@ class KeywordRate(Scorer):
     def init(self, ctx: Context) -> None:
         print()
         print(
-            f"Loading {self.settings.score_name} evaluation prompts from [bold]{self.settings.prompts.dataset}[/]..."
+            f"Loading {self.settings.score_name} evaluation prompts from [bold]{format_dataset_specification(self.settings.prompts)}[/]..."
         )
         self.prompts = ctx.load_prompts(self.settings.prompts)
         print(f"* [bold]{len(self.prompts)}[/] prompts loaded")
@@ -105,10 +117,12 @@ class KeywordRate(Scorer):
 
             if self.settings.print_responses:
                 print()
-                print(f"[bold]System prompt:[/] {prompt.system}")
-                print(f"[bold]Prompt:[/] {prompt.user}")
+                print(f"[bold]System prompt:[/] {escape(prompt.system)}")
+                print(f"[bold]Prompt:[/] {escape(prompt.user)}")
                 if not response.strip():
                     response = "[italic]\\[empty][/]"
+                else:
+                    response = escape(response)
                 print(
                     f"[bold]Response:[/] [{'red' if is_match else 'green'}]{response}[/]"
                 )

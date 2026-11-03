@@ -2,7 +2,7 @@
 # Copyright (C) 2025-2026  Philipp Emanuel Weidmann <pew@worldwidemann.com> + contributors
 
 from enum import Enum
-from typing import Dict, Literal
+from typing import Any, Literal, TypeAlias
 
 from pydantic import (
     BaseModel,
@@ -32,19 +32,12 @@ class QuantizationMethod(str, Enum):
     BNB_4BIT = "bnb_4bit"
 
 
-class RowNormalization(str, Enum):
-    NONE = "none"
-    PRE = "pre"
-    # POST = "post"  # Theoretically possible, but provides no advantage.
-    FULL = "full"
-
-
 class ExportStrategy(str, Enum):
     MERGE = "merge"
     ADAPTER = "adapter"
 
 
-class DatasetSpecification(BaseModel):
+class SingleDatasetSpecification(BaseModel):
     dataset: str = Field(
         description="Hugging Face dataset ID, or path to dataset on disk."
     )
@@ -87,17 +80,10 @@ class DatasetSpecification(BaseModel):
         description="System prompt to use with the prompts (overrides global system prompt if set).",
     )
 
-    residual_plot_label: str | None = Field(
-        default=None,
-        description="Label to use for the dataset in plots of residual vectors.",
-        exclude=True,
-    )
 
-    residual_plot_color: str | None = Field(
-        default=None,
-        description="Matplotlib color to use for the dataset in plots of residual vectors.",
-        exclude=True,
-    )
+DatasetSpecification: TypeAlias = (
+    SingleDatasetSpecification | list[SingleDatasetSpecification]
+)
 
 
 class ScorerConfig(BaseModel):
@@ -150,6 +136,48 @@ class ScorerConfig(BaseModel):
         return value
 
 
+class ModifierConfig(BaseModel):
+    """
+    Configuration for a modifier plugin.
+
+    TOML format:
+    - { plugin = "<plugin>", instance_name = "<optional>" }
+    """
+
+    plugin: str = Field(
+        description=(
+            "Plugin to load. Either a file path with class name "
+            "(`path/to/plugin.py:ClassName`) or a fully-qualified import path "
+            "(`module.submodule.ClassName`)."
+        ),
+    )
+
+    instance_name: str | None = Field(
+        default=None,
+        description=(
+            "Optional name to distinguish multiple instances of the same plugin class. "
+            "Instance-specific settings live under `[modifier.<ClassName>_<instance_name>]`."
+        ),
+    )
+
+    @field_validator("instance_name")
+    @classmethod
+    def validate_instance_name(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+
+        if not value.strip():
+            raise ValueError("cannot be empty or whitespace")
+
+        if "." in value:
+            raise ValueError("'.' is not allowed")
+
+        if any(char.isspace() for char in value):
+            raise ValueError("whitespace is not allowed")
+
+        return value
+
+
 class BenchmarkSpecification(BaseModel):
     task: str = Field(
         description="Task ID of the benchmark in the Language Model Evaluation Harness."
@@ -173,7 +201,7 @@ class Settings(BaseSettings):
     evaluate_model: str | None = Field(
         default=None,
         description=(
-            "If this model ID or path is set, then instead of abliterating the main model, "
+            "If this model ID or path is set, then instead of modifying the main model, "
             "evaluate this model relative to the main model."
         ),
         exclude=True,
@@ -182,7 +210,7 @@ class Settings(BaseSettings):
     collect_reproducibles: str | None = Field(
         default=None,
         description=(
-            "If this directory path is set, then instead of abliterating a model, "
+            "If this directory path is set, then instead of modifying a model, "
             "download all reproduce.json files from public Heretic model repositories "
             "on Hugging Face, and store them in that directory for archival purposes."
         ),
@@ -193,7 +221,7 @@ class Settings(BaseSettings):
         default=None,
         description=(
             "If this path or URL to a reproduce.json file is set, load reproduction information "
-            "from that file, and attempt to reproduce the abliterated model it originated from."
+            "from that file, and attempt to reproduce the modified model it originated from."
         ),
         exclude=True,
     )
@@ -226,12 +254,12 @@ class Settings(BaseSettings):
         ),
     )
 
-    device_map: str | Dict[str, int | str] = Field(
+    device_map: str | dict[str, int | str] = Field(
         default="auto",
         description="Device map to pass to Accelerate when loading the model.",
     )
 
-    max_memory: Dict[str, str] | None = Field(
+    max_memory: dict[str, str] | None = Field(
         default=None,
         description='Maximum memory to allocate per device (e.g., { "0" = "20GB", "cpu" = "64GB" }).',
     )
@@ -259,6 +287,18 @@ class Settings(BaseSettings):
         exclude=True,
     )
 
+    batch_size_test_prompts: DatasetSpecification = Field(
+        default=SingleDatasetSpecification(
+            dataset="mlabonne/harmless_alpaca",
+            split="train[:256]",
+            column="text",
+        ),
+        description="Dataset of prompts to use for automatically determining the optimal batch size.",
+        # When storing a settings object, the batch size is already fixed,
+        # either determined by the automatic mechanism or by explicit user choice.
+        exclude=True,
+    )
+
     max_response_length: PositiveInt = Field(
         default=100,
         description="Maximum number of tokens to generate for each response.",
@@ -273,31 +313,50 @@ class Settings(BaseSettings):
         ),
     )
 
-    chain_of_thought_skips: list[tuple[str, str]] = Field(
+    response_prefix_test_prompts: DatasetSpecification = Field(
+        default=[
+            SingleDatasetSpecification(
+                dataset="mlabonne/harmless_alpaca",
+                split="train[:100]",
+                column="text",
+            ),
+            SingleDatasetSpecification(
+                dataset="mlabonne/harmful_behaviors",
+                split="train[:100]",
+                column="text",
+            ),
+        ],
+        description="Dataset of prompts to use for automatically determining the response prefix.",
+        # When storing a settings object, the response prefix is already fixed,
+        # either determined by the automatic mechanism or by explicit user choice.
+        exclude=True,
+    )
+
+    chain_of_thought_blocks: list[tuple[str, str]] = Field(
         default=[
             # Most thinking models.
             (
                 "<think>",
-                "<think></think>",
+                "</think>",
             ),
             # gpt-oss.
             (
                 "<|channel|>analysis<|message|>",
-                "<|channel|>analysis<|message|><|end|><|start|>assistant<|channel|>final<|message|>",
+                "<|end|><|start|>assistant<|channel|>final<|message|>",
             ),
             # Unknown, suggested by user.
             (
                 "<thought>",
-                "<thought></thought>",
+                "</thought>",
             ),
             # Unknown, suggested by user.
             (
                 "[THINK]",
-                "[THINK][/THINK]",
+                "[/THINK]",
             ),
         ],
         description=(
-            "List of pairs of the form (cot_initializer, closed_cot_block) used to skip "
+            "List of pairs of the form (cot_initializer, cot_finalizer) used to skip "
             "the Chain-of-Thought block in responses, so that evaluation happens "
             "at the start of the actual response."
         ),
@@ -312,38 +371,8 @@ class Settings(BaseSettings):
         exclude=True,
     )
 
-    print_residual_geometry: bool = Field(
-        default=False,
-        description="Whether to print detailed information about residuals and residual directions.",
-        exclude=True,
-    )
-
-    plot_residuals: bool = Field(
-        default=False,
-        description="Whether to generate plots showing PaCMAP projections of residual vectors.",
-        exclude=True,
-    )
-
-    residual_plot_path: str = Field(
-        default="plots",
-        description="Base path to save plots of residual vectors to.",
-        exclude=True,
-    )
-
-    residual_plot_title: str = Field(
-        default='PaCMAP Projection of Residual Vectors for "Harmless" and "Harmful" Prompts',
-        description="Title placed above plots of residual vectors.",
-        exclude=True,
-    )
-
-    residual_plot_style: str = Field(
-        default="dark_background",
-        description="Matplotlib style sheet to use for plots of residual vectors.",
-        exclude=True,
-    )
-
     scorers: list[ScorerConfig] = Field(
-        default_factory=lambda: [
+        default=[
             ScorerConfig(
                 plugin="heretic.scorers.keyword_rate.KeywordRate",
                 optimization="minimize",
@@ -354,58 +383,33 @@ class Settings(BaseSettings):
             ),
         ],
         description=(
-            "List of scorer plugin configs. Each entry is an object"
-            " { plugin = <plugin>, optimization = <optimization>, instance_name = <optional> }."
-            " <optimization> is one of 'minimize', 'maximize', 'none' (do not optimize)."
+            "List of scorer plugin configs. Each entry is an object "
+            "{ plugin = <plugin>, optimization = <optimization>, instance_name = <optional> }. "
+            '<optimization> is one of "minimize", "maximize", or "none" (do not optimize).'
         ),
     )
 
-    orthogonalize_direction: bool = Field(
-        default=True,
+    modifiers: list[ModifierConfig] = Field(
+        default=[
+            ModifierConfig(
+                plugin="heretic.modifiers.ara.ARA",
+            ),
+        ],
         description=(
-            "Whether to adjust the residual directions so that only the component that is "
-            "orthogonal to the good direction is subtracted during abliteration."
-        ),
-    )
-
-    row_normalization: RowNormalization = Field(
-        default=RowNormalization.FULL,
-        description=(
-            "How to apply row normalization of the weights. Options: "
-            '"none" (no normalization), '
-            '"pre" (compute LoRA adapter relative to row-normalized weights), '
-            '"full" (like "pre", but renormalizes to preserve original row magnitudes).'
-        ),
-    )
-
-    full_normalization_lora_rank: PositiveInt = Field(
-        default=3,
-        description=(
-            'The rank of the LoRA adapter to use when "full" row normalization is used. '
-            "Row magnitude preservation is approximate due to non-linear effects, "
-            "and this determines the rank of that approximation. Higher ranks produce "
-            "larger output files and may slow down evaluation."
-        ),
-    )
-
-    winsorization_quantile: float = Field(
-        default=1.0,
-        description=(
-            "The symmetric winsorization to apply to the per-prompt, per-layer residual vectors, "
-            "expressed as the quantile to clamp to (between 0 and 1). Disabled by default. "
-            'This can tame so-called "massive activations" that occur in some models. '
-            "Example: winsorization_quantile = 0.95 computes the 0.95-quantile of the absolute values "
-            "of the components, then clamps the magnitudes of all components to that quantile."
+            "List of modifier plugin configs. Each entry is an object "
+            "{ plugin = <plugin>, instance_name = <optional> }. "
+            "Note that only a single modifier can currently be applied, "
+            "and this list must contain exactly one entry."
         ),
     )
 
     n_trials: PositiveInt = Field(
-        default=200,
-        description="Number of abliteration trials to run during optimization.",
+        default=100,
+        description="Number of trials to run during optimization.",
     )
 
     n_startup_trials: NonNegativeInt = Field(
-        default=60,
+        default=30,
         description="Number of trials that use random sampling for the purpose of exploration.",
     )
 
@@ -421,6 +425,11 @@ class Settings(BaseSettings):
         default="checkpoints",
         description="Directory to save and load study progress to/from.",
         exclude=True,
+    )
+
+    modified_model_type: str = Field(
+        default="decensored",
+        description="Adjective describing the type of model produced by the configuration.",
     )
 
     benchmarks: list[BenchmarkSpecification] = Field(
@@ -481,7 +490,7 @@ class Settings(BaseSettings):
                 description="An Adversarial Winograd Schema Challenge at Scale",
             ),
         ],
-        description="Benchmarks to offer to the user for evaluating abliterated models.",
+        description="Benchmarks to offer to the user for evaluating modified models.",
         exclude=True,
     )
 
@@ -512,7 +521,7 @@ class Settings(BaseSettings):
 
     model_action: str | None = Field(
         default=None,
-        description='Action to take with the decensored model: "save", "upload", or unset to prompt the user.',
+        description='Action to take with the modified model: "save", "upload", or unset to prompt the user.',
     )
 
     save_directory: str | None = Field(
@@ -537,6 +546,15 @@ class Settings(BaseSettings):
         description='Which reproducibility information to add to the Hugging Face repository: "full", "basic", "none", or unset to prompt the user.',
     )
 
+    upload_tags: list[str] = Field(
+        default=[
+            "uncensored",
+            "decensored",
+            "abliterated",
+        ],
+        description="Tags to add to the Hugging Face repository when uploading the model.",
+    )
+
     ignore_mismatches: bool | None = Field(
         default=None,
         description="Whether to attempt to reproduce the model even if there are environment mismatches, or unset to prompt the user.",
@@ -547,31 +565,9 @@ class Settings(BaseSettings):
         description="System prompt to use when prompting the model.",
     )
 
-    good_prompts: DatasetSpecification = Field(
-        default=DatasetSpecification(
-            dataset="mlabonne/harmless_alpaca",
-            split="train[:400]",
-            column="text",
-            residual_plot_label='"Harmless" prompts',
-            residual_plot_color="royalblue",
-        ),
-        description="Dataset of prompts that tend to not result in refusals (used for calculating refusal directions).",
-    )
-
-    bad_prompts: DatasetSpecification = Field(
-        default=DatasetSpecification(
-            dataset="mlabonne/harmful_behaviors",
-            split="train[:400]",
-            column="text",
-            residual_plot_label='"Harmful" prompts',
-            residual_plot_color="darkorange",
-        ),
-        description="Dataset of prompts that tend to result in refusals (used for calculating refusal directions).",
-    )
-
     # We intentionally allow extra keys so users can provide plugin-specific
     # configuration in TOML tables like `[scorer.KeywordRate]` which are later
-    # consumed via `settings.model_extra` (see `Evaluator._get_plugin_namespace`).
+    # consumed via `settings.model_extra` (see `plugin.get_plugin_namespace`).
     model_config = SettingsConfigDict(extra="allow")
 
     @classmethod
@@ -584,7 +580,7 @@ class Settings(BaseSettings):
         file_secret_settings: PydanticBaseSettingsSource,
     ) -> tuple[PydanticBaseSettingsSource, ...]:
         return (
-            init_settings,  # Used during resume - should override *all* other sources.
+            init_settings,  # Values passed to the constructor override all other sources.
             CliSettingsSource(
                 settings_cls,
                 cli_parse_args=True,
@@ -596,3 +592,36 @@ class Settings(BaseSettings):
             file_secret_settings,
             TomlConfigSettingsSource(settings_cls, toml_file="config.toml"),
         )
+
+    @classmethod
+    def model_validate_init_only(
+        cls, values: dict[str, Any], current: "Settings"
+    ) -> "Settings":
+        """
+        Validates `values` without reading any other settings source: nothing
+        comes from config.toml, environment variables or the command line, and
+        settings missing from `values` get their defaults. Settings with
+        `exclude=True` (such as `save_directory`) are left out of serialized
+        settings, so they are taken from `current`.
+        """
+        excluded = {
+            name: getattr(current, name)
+            for name, field in cls.model_fields.items()
+            if field.exclude
+        }
+        return InitOnlySettings.model_validate(values | excluded)
+
+
+class InitOnlySettings(Settings):
+    """Settings validated only from the values passed in, without reading any source."""
+
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> tuple[PydanticBaseSettingsSource, ...]:
+        return (init_settings,)
