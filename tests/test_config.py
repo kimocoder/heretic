@@ -214,6 +214,7 @@ class SettingsUploadTagsTests(unittest.TestCase):
 class PackageExportTests(unittest.TestCase):
     def test_package_exports(self) -> None:
         from importlib.metadata import version
+
         import heretic
 
         self.assertEqual(heretic.__version__, version("heretic-llm"))

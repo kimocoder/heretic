@@ -1170,7 +1170,7 @@ def run():
                             if strategy == ExportStrategy.ADAPTER:
                                 print("Uploading LoRA adapter...")
                                 model.model.push_to_hub(
-                                    repo_id,  # ty: ignore[invalid-argument-type]
+                                    repo_id,
                                     private=private,
                                     max_shard_size=settings.max_shard_size,
                                     token=token,
@@ -1180,7 +1180,7 @@ def run():
                                 print("Uploading merged model...")
                                 merged_model = model.get_merged_model()
                                 merged_model.push_to_hub(
-                                    repo_id,  # ty: ignore[invalid-argument-type]
+                                    repo_id,
                                     private=private,
                                     max_shard_size=settings.max_shard_size,
                                     token=token,
@@ -1380,7 +1380,7 @@ def run():
                             benchmark_original_model = scope == "Benchmark both models"
 
                             hflm = HFLM(
-                                pretrained=model.model,
+                                pretrained=model.model,  # ty: ignore[invalid-argument-type]
                                 tokenizer=model.tokenizer,  # ty:ignore[invalid-argument-type]
                                 batch_size="auto",
                             )

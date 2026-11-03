@@ -49,7 +49,7 @@ dependencies = [
 [dependency-groups]
 dev = [
     "ruff>=0.17.3",
-    "ty>=0.0.92",
+    "ty>=0.0.96",
 ]
 
 [project.urls]
@@ -76,7 +76,7 @@ ignore = [
 
 [tool.uv]
 exclude-newer = "7 days"
-exclude-newer-package = { huggingface-hub = "2026-11-03T00:00:00Z", pydantic-settings = "2026-11-03T00:00:00Z", transformers = "2026-11-03T00:00:00Z" }
+exclude-newer-package = { huggingface-hub = "2026-11-03T00:00:00Z", pydantic-settings = "2026-11-03T00:00:00Z", transformers = "2026-11-03T00:00:00Z", ty = "2026-11-03T23:59:59Z" }
 
 [tool.uv.sources]
 torch = { index = "pytorch" }

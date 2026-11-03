@@ -161,7 +161,7 @@ class Model:
         # into the first user message instead (see _apply_system_role).
         self.supports_system_role = chat_template_supports_system_role(self.tokenizer)
 
-        self.model = None
+        self.model = None  # ty: ignore[invalid-assignment]
         self.max_memory = (
             {int(k) if k.isdigit() else k: v for k, v in settings.max_memory.items()}
             if settings.max_memory
@@ -214,7 +214,7 @@ class Model:
                     max_new_tokens=1,
                 )
             except Exception as error:
-                self.model = None
+                self.model = None  # ty: ignore[invalid-assignment]
                 empty_cache()
 
                 formatted = format_exception(error)
@@ -349,7 +349,7 @@ class Model:
 
             # Apply LoRA adapters to the CPU model
             print("* Applying LoRA adapters...")
-            peft_model = get_peft_model(base_model, self.peft_config)
+            peft_model = cast(PeftModel, get_peft_model(base_model, self.peft_config))
 
             # Copy the trained adapter weights
             for name, param in peft_model.named_parameters():
@@ -395,7 +395,7 @@ class Model:
             return True
 
         # Purge existing model object from memory to make space.
-        self.model = None
+        self.model = None  # ty: ignore[invalid-assignment]
         empty_cache()
 
         quantization_config = self._get_quantization_config(

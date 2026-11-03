@@ -44,7 +44,7 @@ class BenchmarkScore(Scorer):
         model = ctx.get_model()
 
         self.hflm = HFLM(
-            pretrained=model.model,
+            pretrained=model.model,  # ty: ignore[invalid-argument-type]
             tokenizer=model.tokenizer,  # ty:ignore[invalid-argument-type]
             batch_size="auto",
         )
@@ -55,7 +55,7 @@ class BenchmarkScore(Scorer):
         # is to get the benefits of batch size caching while allowing for
         # model reloads, e.g. when using --evaluate-model.
         model = ctx.get_model()
-        self.hflm.pretrained = model.model
+        self.hflm.pretrained = model.model  # ty: ignore[invalid-assignment]
         self.hflm._model = model.model
 
         results = lm_eval.simple_evaluate(
