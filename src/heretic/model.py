@@ -2,7 +2,10 @@
 # Copyright (C) 2025-2026  Philipp Emanuel Weidmann <pew@worldwidemann.com> + contributors
 
 import json
+import re
 import subprocess
+import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from collections.abc import Callable
@@ -188,17 +191,104 @@ def _download_from_modelscope(model: str) -> Path:
     return snapshot_dir
 
 
+# Hub responses worth waiting out. A 429 is not a missing repository.
+_TRANSIENT_HUB_STATUSES = frozenset({408, 429, 500, 502, 503, 504})
+_MAX_HUB_PROBES = 5
+_MAX_HUB_RETRY_WAIT = 360.0
+_RATELIMIT_RESET = re.compile(r"t\s*=\s*(?P<t>\d+)")
+
+
+def _header(headers: Any, name: str) -> str | None:
+    try:
+        direct = headers.get(name)
+    except Exception:
+        direct = None
+    if direct:
+        return str(direct)
+    lowered = name.lower()
+    try:
+        pairs = list(headers.items())
+    except Exception:
+        return None
+    for key, value in pairs:
+        if str(key).lower() == lowered and value:
+            return str(value)
+    return None
+
+
+def _response_status(exc: BaseException) -> int | None:
+    response = getattr(exc, "response", None)
+    status = getattr(response, "status_code", None)
+    if isinstance(status, int):
+        return status
+    if isinstance(exc, urllib.error.HTTPError):
+        return exc.code
+    return None
+
+
+def _rate_limit_reset_seconds(exc: BaseException) -> float | None:
+    response = getattr(exc, "response", None)
+    headers = getattr(response, "headers", None)
+    if headers is None:
+        return None
+    ratelimit = _header(headers, "ratelimit")
+    if ratelimit:
+        match = _RATELIMIT_RESET.search(ratelimit)
+        if match:
+            return float(match.group("t"))
+    retry_after = _header(headers, "retry-after")
+    if retry_after and retry_after.strip().isdigit():
+        return float(retry_after.strip())
+    return None
+
+
+def _transient_hub_delay(exc: BaseException, attempt: int) -> float | None:
+    status = _response_status(exc)
+    if status not in _TRANSIENT_HUB_STATUSES:
+        return None
+    reset = _rate_limit_reset_seconds(exc)
+    if reset is None:
+        reset = 15.0 if status == 429 else min(2.0**attempt, 8.0)
+    return min(reset + 1.0, _MAX_HUB_RETRY_WAIT)
+
+
 def ensure_model_cached(model: str, revision: str | None = None) -> str:
     local_snap = _find_complete_hf_snapshot(model, revision)
     if local_snap is not None:
         return str(local_snap)
-    try:
-        huggingface_hub.model_info(model, revision=revision, timeout=10)
-        return model
-    except Exception:
-        if "/" in model and not Path(model).exists():
+
+    # Retry rate limits and server errors before the ModelScope mirror.
+    # The mirror does not host every Hub model, including the CI fixtures,
+    # and a 429 used to escape as an uncaught ModelScope 404.
+    hub_error: Exception | None = None
+    for attempt in range(1, _MAX_HUB_PROBES + 1):
+        try:
+            huggingface_hub.model_info(model, revision=revision, timeout=10)
+            return model
+        except Exception as exc:
+            hub_error = exc
+            delay = _transient_hub_delay(exc, attempt)
+            if delay is None or attempt == _MAX_HUB_PROBES:
+                break
+            status = _response_status(exc)
+            print(
+                "* [yellow]Hugging Face Hub returned "
+                f"HTTP {status}. Retrying in {delay:.0f}s "
+                f"(attempt {attempt}/{_MAX_HUB_PROBES})...[/]"
+            )
+            time.sleep(delay)
+
+    if hub_error is None:
+        raise RuntimeError(f"Failed to resolve model {model}.")
+
+    if "/" in model and not Path(model).exists():
+        try:
             return str(_download_from_modelscope(model))
-        raise
+        except urllib.error.HTTPError as mirror_error:
+            if mirror_error.code == 404:
+                raise hub_error from mirror_error
+            raise
+    raise hub_error
 
 
 def get_model_class(
