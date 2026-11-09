@@ -48,8 +48,8 @@ dependencies = [
 
 [dependency-groups]
 dev = [
-    "ruff>=0.17.3",
-    "ty>=0.0.96",
+    "ruff>=0.17.4",
+    "ty>=0.0.99",
 ]
 
 [project.urls]
@@ -75,8 +75,17 @@ ignore = [
 ]
 
 [tool.uv]
+override-dependencies = [
+    "chardet>=7.7.0",
+    "fsspec[http]>=2026.9.0",
+    "kernels>=0.18.2",
+    "mpmath>=1.4.1",
+    "python-dateutil>=4.0.0; python_version >= '3.11'",
+    "sigstore-models>=0.0.7; python_version >= '3.11'",
+    "typepy>=2.0.0",
+]
 exclude-newer = "7 days"
-exclude-newer-package = { huggingface-hub = "2026-11-03T00:00:00Z", pydantic-settings = "2026-11-03T00:00:00Z", transformers = "2026-11-03T00:00:00Z", ty = "2026-11-03T23:59:59Z" }
+exclude-newer-package = { chardet = "2026-11-09T23:59:59Z", click = "2026-11-09T23:59:59Z", dnspython = "2026-11-09T23:59:59Z", filelock = "2026-11-09T23:59:59Z", fsspec = "2026-11-09T23:59:59Z", huggingface-hub = "2026-11-09T23:59:59Z", kernels = "2026-11-09T23:59:59Z", mpmath = "2026-11-09T23:59:59Z", pandas = "2026-11-09T23:59:59Z", platformdirs = "2026-11-09T23:59:59Z", pyarrow = "2026-11-09T23:59:59Z", pydantic = "2026-11-09T23:59:59Z", pydantic-core = "2026-11-09T23:59:59Z", pydantic-settings = "2026-11-09T23:59:59Z", python-dateutil = "2026-11-09T23:59:59Z", regex = "2026-11-09T23:59:59Z", ruff = "2026-11-09T23:59:59Z", sigstore-models = "2026-11-09T23:59:59Z", sqlalchemy = "2026-11-09T23:59:59Z", threadpoolctl = "2026-11-09T23:59:59Z", transformers = "2026-11-09T23:59:59Z", ty = "2026-11-09T23:59:59Z", typer = "2026-11-09T23:59:59Z", typepy = "2026-11-09T23:59:59Z", typing-inspection = "2026-11-09T23:59:59Z", xxhash = "2026-11-09T23:59:59Z" }
 
 [tool.uv.sources]
 torch = { index = "pytorch" }
