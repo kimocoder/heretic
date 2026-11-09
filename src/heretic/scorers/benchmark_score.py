@@ -49,7 +49,7 @@ class BenchmarkScore(Scorer):
         model = ctx.get_model()
 
         hflm = HFLM(
-            pretrained=model.model,
+            pretrained=model.model,  # ty: ignore[invalid-argument-type]
             tokenizer=model.tokenizer,  # ty: ignore[invalid-argument-type]
             batch_size="auto"
             if self.settings.batch_size == 0
