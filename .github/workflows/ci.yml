@@ -46,6 +46,7 @@ jobs:
       - name: Run tests
         env:
           PYTHONUNBUFFERED: "1"
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
           uv run python -m unittest discover -s tests -p 'test_*.py'
           uv run tests/run_tests.py 2>&1
