@@ -38,6 +38,21 @@ from .config import QuantizationMethod, Settings
 from .system import empty_cache
 from .utils import Prompt, batchify, format_exception, print
 
+# In transformers >=5.22.2, kwargs passed to apply_chat_template are sanitized
+# via _plain_template_data which turns non-JSON objects (including callables like
+# strftime_now) into string placeholders ("<function>"), breaking Jinja template calls.
+with suppress(AttributeError, ImportError):
+    import transformers.utils.chat_template_utils as _ctu
+
+    _orig_plain_template_data = _ctu._plain_template_data
+
+    def _allow_callables_plain_template_data(value: Any) -> Any:
+        if callable(value):
+            return value
+        return _orig_plain_template_data(value)
+
+    _ctu._plain_template_data = _allow_callables_plain_template_data  # ty: ignore[invalid-assignment]
+
 
 def _is_snapshot_complete(snapshot_dir: Path) -> bool:
     if not (snapshot_dir / "config.json").is_file():
