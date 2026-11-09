@@ -7,6 +7,7 @@ import json
 import os
 import platform
 import re
+import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -59,6 +60,122 @@ def get_nvidia_driver_version() -> str | None:
         return output.strip().split("\n")[0]
     except (subprocess.CalledProcessError, FileNotFoundError, IndexError):
         return None
+
+
+# "CUDA UMD Version: 13.5" (driver 620+) and the older "CUDA Version: 12.4" header.
+_CUDA_UMD_VERSION_RE = re.compile(r"CUDA UMD Version\s*:\s*([0-9]+(?:\.[0-9]+)*)")
+_CUDA_VERSION_RE = re.compile(r"\bCUDA Version\s*:\s*([0-9]+(?:\.[0-9]+)*)")
+_NVCC_RELEASE_RE = re.compile(r"release\s+([0-9]+\.[0-9]+(?:\.[0-9]+)?)")
+
+
+def _cuda_major_minor(version: str | None) -> str | None:
+    if not version:
+        return None
+    match = re.match(r"(\d+\.\d+)", version)
+    return match.group(1) if match else version
+
+
+def parse_nvidia_smi_cuda_version(output: str) -> str | None:
+    """CUDA version the driver reports, preferring the UMD field.
+
+    ``torch.version.cuda`` is the version PyTorch was built with. nvidia-smi
+    reports the version the installed driver actually supports.
+    """
+
+    umd = _CUDA_UMD_VERSION_RE.search(output)
+    if umd:
+        return umd.group(1)
+    legacy = _CUDA_VERSION_RE.search(output)
+    if legacy:
+        return legacy.group(1)
+    return None
+
+
+def parse_cuda_toolkit_version_json(text: str) -> str | None:
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        return None
+    cuda = data.get("cuda") if isinstance(data, dict) else None
+    version = cuda.get("version") if isinstance(cuda, dict) else None
+    return str(version) if version else None
+
+
+def get_nvidia_cuda_version() -> str | None:
+    """Gets the CUDA version supported by the installed NVIDIA driver."""
+
+    try:
+        output = subprocess.check_output(
+            ["nvidia-smi"],
+            stderr=subprocess.DEVNULL,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return parse_nvidia_smi_cuda_version(output)
+
+
+def get_cuda_toolkit_version() -> str | None:
+    """Gets the active CUDA toolkit version from version.json or nvcc."""
+
+    roots: list[str] = []
+    for key in ("CUDA_HOME", "CUDA_PATH"):
+        value = os.environ.get(key)
+        if value:
+            roots.append(value)
+    roots.append("/usr/local/cuda")
+    for root in roots:
+        version_file = os.path.join(root, "version.json")
+        try:
+            with open(version_file, encoding="utf-8") as handle:
+                version = parse_cuda_toolkit_version_json(handle.read())
+        except OSError:
+            version = None
+        if version:
+            return version
+
+    nvcc = shutil.which("nvcc") or "/usr/local/cuda/bin/nvcc"
+    if not os.path.isfile(nvcc):
+        return None
+    try:
+        output = subprocess.check_output(
+            [nvcc, "--version"],
+            stderr=subprocess.DEVNULL,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    match = _NVCC_RELEASE_RE.search(output)
+    return match.group(1) if match else None
+
+
+def accelerator_version_lines(info: dict[str, Any]) -> list[tuple[str, str]]:
+    """Version lines for the accelerator stack, excluding the kernel driver.
+
+    The CUDA line is the driver/toolkit version when nvidia-smi reports one.
+    PyTorch's build version is separate, because a cu130 wheel still runs on
+    a newer 13.x driver and is not the machine's CUDA install.
+    """
+
+    lines: list[tuple[str, str]] = []
+    api_name = info.get("api_name")
+    system_cuda = info.get("system_cuda_version")
+    api_version = info.get("api_version")
+    shown = system_cuda or api_version
+    if api_name and shown:
+        lines.append((str(api_name), str(shown)))
+    toolkit = info.get("cuda_toolkit_version")
+    if toolkit:
+        lines.append(("CUDA Toolkit", str(toolkit)))
+    if (
+        system_cuda
+        and api_version
+        and _cuda_major_minor(str(api_version)) != _cuda_major_minor(str(system_cuda))
+    ):
+        lines.append(("PyTorch CUDA", str(api_version)))
+    return lines
 
 
 def get_amdgpu_driver_version() -> str | None:
@@ -246,10 +363,14 @@ def get_accelerator_info_dict() -> dict[str, Any]:
 
         # ROCm (AMD) and CUDA (NVIDIA) share the same API in PyTorch.
         # We distinguish them by checking for the HIP version.
+        # api_version stays the PyTorch build. system_cuda_version is what
+        # the driver supports; that is the CUDA install, not the wheel tag.
         info: dict[str, Any] = {
             "type": "ROCm" if is_rocm else "CUDA",
             "api_name": "HIP Version" if is_rocm else "CUDA Version",
             "api_version": torch.version.hip if is_rocm else torch.version.cuda,
+            "system_cuda_version": None if is_rocm else get_nvidia_cuda_version(),
+            "cuda_toolkit_version": None if is_rocm else get_cuda_toolkit_version(),
             "driver_version": get_amdgpu_driver_version()
             if is_rocm
             else get_nvidia_driver_version(),
@@ -342,8 +463,8 @@ def get_accelerator_info(include_warnings: bool = True) -> str:
     vram_suffix = f" ({total_vram:.2f} GB total VRAM)" if total_vram > 0 else ""
     report = f"Detected [bold]{count or 1}[/] {info['type']} device(s){vram_suffix}\n"
 
-    if info.get("api_name") and info.get("api_version"):
-        report += f"{info['api_name']}: [bold]{info['api_version']}[/]\n"
+    for label, version in accelerator_version_lines(info):
+        report += f"{label}: [bold]{version}[/]\n"
 
     driver = info.get("driver_version") or "Unknown"
     report += f"Driver Version: [bold]{driver}[/]\n"

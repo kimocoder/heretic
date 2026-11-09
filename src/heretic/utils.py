@@ -32,6 +32,7 @@ from rich.console import Console
 
 from .config import DatasetSpecification, Settings, SingleDatasetSpecification
 from .system import (
+    accelerator_version_lines,
     get_accelerator_info_dict,
     get_cpu_info_dict,
     get_heretic_version_info,
@@ -499,10 +500,8 @@ def generate_reproduce_readme(
                 f"- **{accelerators['type']}:** Detected {len(devices)} device(s){vram_suffix}"
             ]
 
-            if accelerators.get("api_name") and accelerators.get("api_version"):
-                accelerator_lines.append(
-                    f"  - **{accelerators['api_name']}:** {accelerators['api_version']}"
-                )
+            for label, version in accelerator_version_lines(accelerators):
+                accelerator_lines.append(f"  - **{label}:** {version}")
 
             if accelerators.get("driver_version"):
                 accelerator_lines.append(
