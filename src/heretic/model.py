@@ -10,7 +10,7 @@ import urllib.parse
 import urllib.request
 from collections.abc import Callable
 from contextlib import suppress
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, TypeAlias, cast
 
@@ -357,7 +357,7 @@ def _collapse_flattened_residual_streams(
 # which makes the residuals, and therefore the modified model, depend on the day
 # Heretic is run. Rendering templates with a fixed date keeps results reproducible.
 def strftime_fixed_date(format: str) -> str:
-    return datetime(2026, 1, 1, tzinfo=timezone.utc).strftime(format)
+    return datetime(2026, 1, 1, tzinfo=UTC).strftime(format)
 
 
 def chat_template_supports_system_role(tokenizer: PreTrainedTokenizerBase) -> bool:

@@ -10,7 +10,7 @@ import platform
 import tempfile
 import traceback
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from importlib.metadata import version
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeVar
@@ -760,9 +760,7 @@ def create_reproduce_folder(
             settings.model_commit = ref_file.read_text(encoding="utf-8").strip() or None
 
     # Strip microseconds and timezone for a clean format.
-    timestamp = (
-        datetime.now(timezone.utc).replace(microsecond=0, tzinfo=None).isoformat()
-    )
+    timestamp = datetime.now(UTC).replace(microsecond=0, tzinfo=None).isoformat()
 
     (reproduce_dir / "requirements.txt").write_text(
         generate_requirements_txt(),
