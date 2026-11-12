@@ -59,6 +59,9 @@ class BenchmarkScore(Scorer):
         results = lm_eval.simple_evaluate(
             model=hflm,
             tasks=[self.settings.task],
+            # lm-eval's request cache is sqlitedict/pickle-based, which has a
+            # known insecure-deserialization advisory and is not needed here.
+            cache_requests=False,
         )
 
         if self.settings.batch_size == 0 and hflm.batch_sizes:

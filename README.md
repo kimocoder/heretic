@@ -74,7 +74,7 @@ produced with competing abliteration tools.[^2][^3]
 
 ## Usage
 
-Prepare a Python 3.10+ environment with PyTorch 2.6+ installed as appropriate
+Prepare a Python 3.11+ environment with PyTorch 2.6+ installed as appropriate
 for your hardware. Then run:
 
 ```sh

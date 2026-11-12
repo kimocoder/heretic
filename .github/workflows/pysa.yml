@@ -33,10 +33,10 @@ jobs:
           enable-cache: true
 
       - name: Set up Python
-        run: uv python install 3.10
+        run: uv python install 3.11
 
       - name: Install dependencies
-        run: uv sync --python 3.10 --all-extras --dev
+        run: uv sync --python 3.11 --all-extras --dev
 
       - name: Prepare SAPP filters
         run: |
@@ -52,14 +52,14 @@ jobs:
       - name: Run Pysa taint analysis
         run: |
           mkdir -p pysa-output
-          uv run --python 3.10 --with pyre-check pyre analyze --no-verify --save-results-to=./pysa-output || true
+          uv run --python 3.11 --with pyre-check pyre analyze --no-verify --save-results-to=./pysa-output || true
 
       - name: Post-process results with SAPP
         run: |
           if [ -f pysa-output/taint-metadata.json ]; then
-            uv run --python 3.10 --with fb-sapp sapp update warning-codes ./pysa-output/taint-metadata.json || true
-            uv run --python 3.10 --with fb-sapp sapp analyze ./pysa-output || true
-            uv run --python 3.10 --with fb-sapp sapp filter issues 1 tmp/sapp_filters --output-format sarif > pysa-results.sarif || true
+            uv run --python 3.11 --with fb-sapp sapp update warning-codes ./pysa-output/taint-metadata.json || true
+            uv run --python 3.11 --with fb-sapp sapp analyze ./pysa-output || true
+            uv run --python 3.11 --with fb-sapp sapp filter issues 1 tmp/sapp_filters --output-format sarif > pysa-results.sarif || true
           fi
           if [ ! -s pysa-results.sarif ]; then
             echo '{"$schema":"https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json","version":"2.1.0","runs":[{"tool":{"driver":{"name":"Pysa","rules":[]}},"results":[]}]}' > pysa-results.sarif
